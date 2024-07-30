@@ -1,0 +1,129 @@
+import torch
+import torch.nn as nn
+
+# 定义多头注意力机制
+class MultiHeadedAttention(nn.Module):
+    def __init__(self, heads, d_model, dropout=0.1):
+        super(MultiHeadedAttention, self).__init__()
+
+        self.d_model = d_model
+        self.d_k = d_model // heads
+        self.h = heads
+
+        self.q_linear = nn.Linear(d_model, d_model)
+        self.v_linear = nn.Linear(d_model, d_model)
+        self.k_linear = nn.Linear(d_model, d_model)
+
+        self.dropout = nn.Dropout(dropout)
+        self.out = nn.Linear(d_model, d_model)
+
+    def forward(self, q, k, v, mask=None):
+        bs = q.size(0)
+
+        # 线性变换
+        q = self.q_linear(q).view(bs, -1, self.h, self.d_k)
+        k = self.k_linear(k).view(bs, -1, self.h, self.d_k)
+        v = self.v_linear(v).view(bs, -1, self.h, self.d_k)
+
+        # 转置以便进行乘法
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+
+        # 计算注意力得分
+        scores = torch.matmul(q, k.transpose(-2, -1)) / torch.sqrt(self.d_k)
+
+        if mask is not None:
+            mask = mask.unsqueeze(1)
+            scores = scores.masked_fill(mask == 0, -1e9)
+
+        # 应用 Softmax 得到注意力权重
+        attn_weights = nn.Softmax(dim=-1)(scores)
+        attn_weights = self.dropout(attn_weights)
+
+        # 计算注意力输出
+        attn_output = torch.matmul(attn_weights, v)
+
+        # 合并多头
+        attn_output = attn_output.transpose(1, 2).contiguous() \
+          .view(bs, -1, self.d_model)
+
+        output = self.out(attn_output)
+
+        return output
+
+# 定义前馈网络
+class FeedForward(nn.Module):
+    def __init__(self, d_model, d_ff, dropout=0.1):
+        super(FeedForward, self).__init__()
+
+        self.linear_1 = nn.Linear(d_model, d_ff)
+        self.dropout = nn.Dropout(dropout)
+        self.linear_2 = nn.Linear(d_ff, d_model)
+
+    def forward(self, x):
+        x = self.linear_1(x)
+        x = nn.ReLU()(x)
+        x = self.dropout(x)
+        x = self.linear_2(x)
+        return x
+
+# 定义 Transformer 层
+class TransformerLayer(nn.Module):
+    def __init__(self, d_model, heads, d_ff, dropout=0.1):
+        super(TransformerLayer, self).__init__()
+
+        self.self_attn = MultiHeadedAttention(heads, d_model, dropout)
+        self.feed_forward = FeedForward(d_model, d_ff, dropout)
+
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+
+    def forward(self, x, mask):
+        # 多头自注意力
+        attn_output = self.self_attn(x, x, x, mask)
+        x = x + self.dropout1(attn_output)
+        x = self.norm1(x)
+
+        # 前馈网络
+        ff_output = self.feed_forward(x)
+        x = x + self.dropout2(ff_output)
+        x = self.norm2(x)
+
+        return x
+
+# 定义 Transformer 模型
+class Transformer(nn.Module):
+    def __init__(self, num_layers, d_model, heads, d_ff, vocab_size, dropout=0.1):
+        super(Transformer, self).__init__()
+
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.layers = nn.ModuleList([TransformerLayer(d_model, heads, d_ff, dropout) for _ in range(num_layers)])
+        self.out = nn.Linear(d_model, vocab_size)
+
+    def forward(self, src, mask):
+        x = self.embedding(src)
+        for layer in self.layers:
+            x = layer(x, mask)
+        output = self.out(x)
+        return output
+
+# 示例用法
+num_layers = 2
+d_model = 512
+heads = 8
+d_ff = 2048
+vocab_size = 1000
+dropout = 0.1
+
+model = Transformer(num_layers, d_model, heads, d_ff, vocab_size, dropout)
+
+# 假设输入序列
+src = torch.randint(0, vocab_size, (32, 10))
+mask = torch.ones_like(src)  # 假设全可见的掩码
+
+output = model(src, mask)
+print(output.shape) 
